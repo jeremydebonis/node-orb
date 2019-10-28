@@ -1,318 +1,75 @@
-version: 2.1
-
-orbs:
-  build-tools: circleci/build-tools@2.6.2
-  jq: circleci/jq@volatile
-  node: circleci/node@dev:alpha
-  orb-tools: circleci/orb-tools@8.27.3
-
-jobs:
-  test:
-    parameters:
-      executor:
-        type: executor
-        default: node/default
-
-      node-version:
-        type: string
-        default: latest
-
-      node-alpine-version:
-        type: string
-        default: nodejs-current
-
-      npm-version:
-        type: string
-        default: latest
-
-      yarn-version:
-        type: string
-        default: ""
-
-    executor: <<parameters.executor>>
-    steps:
-      - checkout
-      - build-tools/install-ci-tools
-
-      - node/install:
-          node-version: <<parameters.node-version>>
-          node-alpine-version: <<parameters.node-alpine-version>>
-          npm-version: <<parameters.npm-version>>
-          yarn-version: <<parameters.yarn-version>>
-          debug: true
-
+version: 2.1 # use CircleCI 2.1
+jobs: # a collection of steps
+  buildAndTest: # runs not using Workflows must have a `build` job as entry point
+    working_directory: ~/mern-starter # directory where steps will run
+    docker: # run the steps with Docker
+      - image: circleci/node:10.16.3 # ...with this image as the primary container; this is where all `steps` will run
+    steps: # a collection of executable commands
+      - checkout # special step to check out source code to working directory
+      - run:
+        name: update-npm
+        command: 'sudo npm install -g npm@latest'
+      - restore_cache: # special step to restore the dependency cache
+        # Read about caching dependencies: https://circleci.com/docs/2.0/caching/
+        key: dependency-cache-{{ checksum "package-lock.json" }}
+      - run:
+        name: install-npm-wee
+        command: npm install
+      - save_cache: # special step to save the dependency cache
+        key: dependency-cache-{{ checksum "package-lock.json" }}
+        paths:
+          - ./node_modules
+      - run: # run tests
+        name: test
+        command: npm test
+        
+  pushToMaster:
+    working_directory: ~/mern-starter # directory where steps will run
+    docker: # run the steps with Docker
+      - image: circleci/node:10.16.3 # ...with this image as the primary container; this is where all `steps` will run
+    steps: # a collection of executable commands
+      - checkout # special step to check out source code to working directory
+      - run: echo "Git Push to master..."
+      
+  deployToProd:
+    working_directory: ~/mern-starter # directory where steps will run
+    docker: # run the steps with Docker
+      - image: circleci/node:10.16.3 # ...with this image as the primary container; this is where all `steps` will run
+    steps: # a collection of executable commands
+      - checkout # special step to check out source code to working directory
+      - run: echo "Deploy to production..."
+     
 # yaml anchor filters
-integration-dev_filters: &integration-dev_filters
+
+features_filter: &features_filter
   branches:
-    ignore: /.*/
-  tags:
-    only: /integration-.*/
+    only: /feature-.*/
 
-integration-master_filters: &integration-master_filters
+integration_filter: &integration_filter
   branches:
-    ignore: /.*/
-  tags:
-    only: /master-.*/
+    only: integration
 
-prod-deploy_requires: &prod-deploy_requires
-  [
-    install-machine-master,
-    install-machine-versioned-master,
-    install-mac-master,
-    install-mac-versioned-master,
-    install-node-master,
-    install-node-versioned-master,
-    install-ubuntu-master,
-    install-ubuntu-versioned-master,
-    install-alpine-master,
-    install-alpine-versioned-master,
-    install-oracle-master,
-    install-oracle-versioned-master
-  ]
-
+master_filter: &master_filter
+  branches:
+    only: master
+  
 workflows:
-  lint_pack-validate_publish-dev:
+  feature-workflow:
     jobs:
-      - orb-tools/lint
-
-      - orb-tools/pack:
-          requires: [orb-tools/lint]
-
-      - orb-tools/publish-dev:
-          orb-name: circleci/node
-          context: orb-publishing
-          requires: [orb-tools/pack]
-
-      - orb-tools/trigger-integration-workflow:
-          name: trigger-integration-dev
-          context: orb-publishing
-          ssh-fingerprints: 2a:2b:49:ea:64:7d:39:4a:58:17:18:17:b2:5c:f6:a8
-          requires: [orb-tools/publish-dev]
-          filters:
-            branches:
-              ignore: master
-
-      - orb-tools/trigger-integration-workflow:
-          name: trigger-integration-master
-          context: orb-publishing
-          ssh-fingerprints: 2a:2b:49:ea:64:7d:39:4a:58:17:18:17:b2:5c:f6:a8
-          tag: master
-          cleanup-tags: true
-          requires: [orb-tools/publish-dev]
-          filters:
-            branches:
-              only: master
-
-  integration-tests_prod-release:
+      - buildAndTest:
+        filters: *features_filter
+    
+  integration-workflow:
     jobs:
-      # triggered by non-master branch commits
-      # machine
-      - test:
-          name: install-machine-dev
-          executor: orb-tools/machine
-          filters: *integration-dev_filters
-
-      - test:
-          name: install-machine-versioned-dev
-          executor:
-            name: orb-tools/machine
-            image: circleci/classic:latest
-          node-version: "6.1.0"
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-dev_filters
-
-      # macos
-      - test:
-          name: install-mac-dev
-          executor: orb-tools/macos
-          filters: *integration-dev_filters
-
-      - test:
-          name: install-mac-versioned-dev
-          executor: orb-tools/macos
-          node-version: "8.9.4"
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-dev_filters
-
-      # node
-      - test:
-          name: install-node-dev
-          filters: *integration-dev_filters
-
-      - test:
-          name: install-node-versioned-dev
-          node-version: "8.9.4"
-          npm-version: "6.3.0"
-          yarn-version: "1.15.2"
-          filters: *integration-dev_filters
-
-      # cimg
-      - test:
-          name: install-ubuntu-dev
-          executor: orb-tools/ubuntu
-          filters: *integration-dev_filters
-
-      - test:
-          name: install-ubuntu-versioned-dev
-          executor: orb-tools/ubuntu
-          node-version: "8.9.4"
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-dev_filters
-
-      # alpine
-      - test:
-          name: install-alpine-dev
-          executor: orb-tools/alpine
-          filters: *integration-dev_filters
-
-      - test:
-          name: install-alpine-versioned-dev
-          executor: orb-tools/alpine
-          node-alpine-version: nodejs
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-dev_filters
-
-      # oracle
-      - test:
-          name: install-oracle-dev
-          executor: orb-tools/oracle
-          node-version: "8.9.4"
-          filters: *integration-dev_filters
-
-      - test:
-          name: install-oracle-versioned-dev
-          executor: orb-tools/oracle
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-dev_filters
-
-      # triggered by master branch commits
-      # machine
-      - test:
-          name: install-machine-master
-          executor: orb-tools/machine
-          filters: *integration-master_filters
-
-      - test:
-          name: install-machine-versioned-master
-          executor:
-            name: orb-tools/machine
-            image: circleci/classic:latest
-          node-version: "6.1.0"
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-master_filters
-
-      # macos
-      - test:
-          name: install-mac-master
-          executor: orb-tools/macos
-          filters: *integration-master_filters
-
-      - test:
-          name: install-mac-versioned-master
-          executor: orb-tools/macos
-          node-version: "8.9.4"
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-master_filters
-
-      # node
-      - test:
-          name: install-node-master
-          filters: *integration-master_filters
-
-      - test:
-          name: install-node-versioned-master
-          node-version: "8.9.4"
-          npm-version: "6.3.0"
-          yarn-version: "1.15.2"
-          filters: *integration-master_filters
-
-      # cimg
-      - test:
-          name: install-ubuntu-master
-          executor: orb-tools/ubuntu
-          filters: *integration-master_filters
-
-      - test:
-          name: install-ubuntu-versioned-master
-          executor: orb-tools/ubuntu
-          node-version: "8.9.4"
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-master_filters
-
-      # alpine
-      - test:
-          name: install-alpine-master
-          executor: orb-tools/alpine
-          filters: *integration-master_filters
-
-      - test:
-          name: install-alpine-versioned-master
-          executor: orb-tools/alpine
-          node-alpine-version: nodejs
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-master_filters
-
-      # oracle
-      - test:
-          name: install-oracle-master
-          executor: orb-tools/oracle
-          node-version: "8.9.4"
-          filters: *integration-master_filters
-
-      - test:
-          name: install-oracle-versioned-master
-          executor: orb-tools/oracle
-          npm-version: "6.4.1"
-          yarn-version: "1.15.2"
-          filters: *integration-master_filters
-
-      # patch, minor, or major publishing
-      - orb-tools/dev-promote-prod:
-          name: dev-promote-patch
-          context: orb-publishing
-          orb-name: circleci/node
-          ssh-fingerprints: 2a:2b:49:ea:64:7d:39:4a:58:17:18:17:b2:5c:f6:a8
-          cleanup-tags: true
-          requires: *prod-deploy_requires
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /master-patch.*/
-
-      - orb-tools/dev-promote-prod:
-          name: dev-promote-minor
-          context: orb-publishing
-          orb-name: circleci/node
-          ssh-fingerprints: 2a:2b:49:ea:64:7d:39:4a:58:17:18:17:b2:5c:f6:a8
-          cleanup-tags: true
-          release: minor
-          requires: *prod-deploy_requires
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /master-minor.*/
-
-      - orb-tools/dev-promote-prod:
-          name: dev-promote-major
-          context: orb-publishing
-          orb-name: circleci/node
-          ssh-fingerprints: 2a:2b:49:ea:64:7d:39:4a:58:17:18:17:b2:5c:f6:a8
-          cleanup-tags: true
-          release: major
-          requires: *prod-deploy_requires
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /master-major.*/
+      - buildAndTest:
+        filters: *integration_filter
+      - pushToMaster:
+        filters: *integration_filter
+    
+  master-workflow:
+    jobs:
+      - buildAndTest:
+        filters: *master_filter    
+      - deployToProd:
+        filters: *master_filter
+    
